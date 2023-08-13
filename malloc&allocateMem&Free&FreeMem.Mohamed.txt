@@ -1,0 +1,259 @@
+#include <inc/lib.h>
+#define NUM_OF_USERHEAP_PAGES ((USER_HEAP_MAX - USER_HEAP_START) / PAGE_SIZE)
+
+// malloc()
+//	This function use NEXT FIT strategy to allocate space in heap
+//  with the given size and return void pointer to the start of the allocated space
+
+//	To do this, we need to switch to the kernel, allocate the required space
+//	in Page File then switch back to the user again.
+//
+//	We can use sys_allocateMem(uint32 virtual_address, uint32 size); which
+//		switches to the kernel mode, calls allocateMem(struct Env* e, uint32 virtual_address, uint32 size) in
+//		"memory_manager.c", then switch back to the user mode here
+//	the allocateMem function is empty, make sure to implement it.
+
+//==================================================================================//
+//============================ REQUIRED FUNCTIONS ==================================//
+//==================================================================================//
+struct NextFit {
+	uint32 usedPages;
+	int allocatedSize;
+} nextFit[NUM_OF_USERHEAP_PAGES];
+struct Addresses {
+	uint32 virtualAddress;
+	int numOfPages;
+	uint32 SIZE;
+} addresses[NUM_OF_USERHEAP_PAGES];
+
+uint32 lastAllocatedIndex = 0;
+uint32 lastAddress = 0;
+int index = 0;
+uint32 USERHEAPNextFitPlacementStrategy(uint32 pageNumbers)
+{
+	int avaliableAllocation = 0;
+	uint32 startAddress = 0;
+	uint32 allocationNumber = 0;
+	uint32 indexOfAllocation = lastAllocatedIndex;
+	uint32 vAddress = (indexOfAllocation * PAGE_SIZE) + USER_HEAP_START;
+
+	do {
+		if (nextFit[indexOfAllocation].usedPages == 0)
+		{
+			allocationNumber++;
+			if (startAddress == 0) {
+				startAddress =
+						(indexOfAllocation * PAGE_SIZE) + USER_HEAP_START;
+			}
+
+			if (allocationNumber == pageNumbers) {
+				avaliableAllocation = 1;
+				break;
+			}
+			indexOfAllocation++;
+		} else {
+			allocationNumber = 0;
+			startAddress = 0;
+			indexOfAllocation++;
+		}
+
+		if (((indexOfAllocation * PAGE_SIZE) + USER_HEAP_START) == USER_HEAP_MAX) {
+			allocationNumber = 0;
+			startAddress = 0;
+			indexOfAllocation = 0;
+		}
+
+	} while (!avaliableAllocation
+			&& ((indexOfAllocation * PAGE_SIZE) + USER_HEAP_START) != vAddress);
+
+	if (avaliableAllocation == 1) {
+		lastAllocatedIndex = indexOfAllocation;
+		return startAddress;
+	}
+
+	return 0;
+}
+
+uint32 number_allocated = 0;
+void* malloc(uint32 size) {
+	if (sys_isUHeapPlacementStrategyNEXTFIT())
+	{
+		uint32 Size = ROUNDUP(size, PAGE_SIZE);
+		int numOfPages = Size / PAGE_SIZE;
+		uint32 FIRSTADDRESS;
+		uint32 ADDRESS;
+		FIRSTADDRESS = USERHEAPNextFitPlacementStrategy(numOfPages);
+		if (FIRSTADDRESS == 0)
+		{
+			return NULL;
+		}
+		ADDRESS = FIRSTADDRESS;
+		sys_allocateMem(FIRSTADDRESS, size);
+		for (uint32 i = 0; i < numOfPages; i++)
+		{
+			nextFit[(ADDRESS - USER_HEAP_START) / PAGE_SIZE].usedPages = 1;
+			ADDRESS += PAGE_SIZE;
+		}
+		nextFit[(ADDRESS - USER_HEAP_START) / PAGE_SIZE].allocatedSize =
+				numOfPages;
+		addresses[number_allocated].virtualAddress = FIRSTADDRESS;
+		addresses[number_allocated].numOfPages = numOfPages;
+		addresses[number_allocated].SIZE = size;
+
+		uint32 ReturnAddress = addresses[number_allocated].virtualAddress;
+		number_allocated++;
+		index++;
+		return (void*) ReturnAddress;
+	}
+
+	return 0;
+
+}
+
+void* smalloc(char *sharedVarName, uint32 size, uint8 isWritable) {
+	panic("smalloc() is not required ..!!");
+	return NULL;
+}
+
+void* sget(int32 ownerEnvID, char *sharedVarName) {
+	panic("sget() is not required ..!!");
+	return 0;
+}
+
+// free():
+//	This function frees the allocation of the given virtual_address
+//	To do this, we need to switch to the kernel, free the pages AND "EMPTY" PAGE TABLES
+//	from page file and main memory then switch back to the user again.
+//
+//	We can use sys_freeMem(uint32 virtual_address, uint32 size); which
+//		switches to the kernel mode, calls freeMem(struct Env* e, uint32 virtual_address, uint32 size) in
+//		"memory_manager.c", then switch back to the user mode here
+//	the freeMem function is empty, make sure to implement it.
+
+void free(void* virtual_address) {
+	int pageNumbers;
+	uint32 SIZEADDR;
+	void*virtualAddress = virtual_address;
+	for (int j = 0; j < index; j++) {
+		if ((uint32) virtual_address == addresses[j].virtualAddress) {
+			pageNumbers = addresses[j].numOfPages;
+			SIZEADDR = addresses[j].SIZE;
+			break;
+		}
+	}
+	sys_freeMem((uint32) virtual_address, SIZEADDR);
+	for (int j = 0; j < pageNumbers; j++) {
+		nextFit[((uint32) virtualAddress - USER_HEAP_START) / PAGE_SIZE].usedPages =
+				0;
+		virtualAddress += PAGE_SIZE;
+	}
+}
+
+void sfree(void* virtual_address) {
+	panic("sfree() is not requried ..!!");
+}
+
+//===============
+// [2] realloc():
+//===============
+
+//	Attempts to resize the allocated space at "virtual_address" to "new_size" bytes,
+//	possibly moving it in the heap.
+//	If successful, returns the new virtual_address, in which case the old virtual_address must no longer be accessed.
+//	On failure, returns a null pointer, and the old virtual_address remains valid.
+
+//	A call with virtual_address = null is equivalent to malloc().
+//	A call with new_size = zero is equivalent to free().
+
+//  Hint: you may need to use the sys_moveMem(uint32 src_virtual_address, uint32 dst_virtual_address, uint32 size)
+//		which switches to the kernel mode, calls moveMem(struct Env* e, uint32 src_virtual_address, uint32 dst_virtual_address, uint32 size)
+//		in "memory_manager.c", then switch back to the user mode here
+//	the moveMem function is empty, make sure to implement it.
+
+void *realloc(void *virtual_address, uint32 new_size) {
+	//TODO: [PROJECT 2022 - BONUS3] User Heap Realloc [User Side]
+	// Write your code here, remove the panic and write your code
+	panic("realloc() is not implemented yet...!!");
+
+	return NULL;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Allocate Mem
+void allocateMem(struct Env* e, uint32 virtual_address, uint32 size) {
+	int PAGES = ROUNDUP(size, PAGE_SIZE) / PAGE_SIZE;
+	for (uint32 counter = 0; counter < PAGES; counter++) {
+		pf_add_empty_env_page(e, virtual_address, 0);
+		virtual_address += PAGE_SIZE;
+	}
+
+}
+
+
+
+
+
+//Free Mem
+void freeMem(struct Env* e, uint32 virtual_address, uint32 size) {
+	uint32 SIZE = ROUNDUP(size, PAGE_SIZE);
+	uint32 NUMBEROFPAGES = SIZE / PAGE_SIZE;
+	uint32 VAddress = virtual_address;
+	uint32 PAGESNUM = NUMBEROFPAGES;
+	uint32 TEMPPAGESNUM = NUMBEROFPAGES;
+	struct Frame_Info* ptr_frame_info = NULL;
+	uint32* PTR_PAGE_TABLE = NULL;
+	uint32 Vaddress = virtual_address;
+	uint32 VA = virtual_address;
+	uint32 MAXSIZEPAGE = e->page_WS_max_size;
+	int IDX = 0;
+	int COUNT_ENTRIES_IN_PT = 1024;
+
+	while (PAGESNUM--)
+	{
+		pf_remove_env_page(e, VAddress);
+		VAddress += PAGE_SIZE;
+	}
+	while (MAXSIZEPAGE--)
+	{
+		uint32 VA_WorkingSet = env_page_ws_get_virtual_address(e, IDX);
+		if ((VA_WorkingSet >= Vaddress)
+				&& (VA_WorkingSet < (Vaddress + SIZE)))
+		{
+			unmap_frame(e->env_page_directory, (void*) VA_WorkingSet);
+			env_page_ws_clear_entry(e, IDX);
+		}
+		IDX++;
+	}
+
+	while (TEMPPAGESNUM--) {
+		int is_Not_PT_Fill = 1;
+		PTR_PAGE_TABLE = NULL;
+		get_page_table(e->env_page_directory, (void*) VA, &PTR_PAGE_TABLE);
+		if (PTR_PAGE_TABLE != NULL) {
+			for (int x = 0; x < COUNT_ENTRIES_IN_PT; x++) {
+				if ((PTR_PAGE_TABLE[x] & PERM_PRESENT) != 0) {
+					is_Not_PT_Fill = 0;
+					break;
+				}
+			}
+			if (is_Not_PT_Fill) {
+				kfree((void*) PTR_PAGE_TABLE);
+				pd_clear_page_dir_entry(e, (uint32) VA);
+			}
+		}
+		VA += PAGE_SIZE;
+	}
+	tlbflush();
+}
